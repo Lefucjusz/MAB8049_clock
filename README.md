@@ -28,7 +28,7 @@ when after 1496th code correction your algorithm finally works - priceless!
 Then you realize that it's 4:15AM, you should have been asleep for a while...the birds have already 
 started singing outside and you are supposed to be at lecture at 8AM...well, who cares, you managed to multiply by 6.25 on MAB8049H, yay!
 
-Useful links that helped me getting started (describe 8042, but it's almost the same as 8049):
+Useful links that helped me getting started (describe 8042, but it's almost the same as 8049):  
 http://bienata.waw.pl/docs/002_EdW_Copy_of_Cyfrowa_archeologia_full.pdf  
 http://devster.monkeeh.com/z80/upi42/
 
