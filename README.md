@@ -38,6 +38,6 @@ http://devster.monkeeh.com/z80/upi42/
 - External program memory
 - DS12887 RTC
 - DS18b20 temperature sensor
-- Time and temperature displayed on HD44780 16x2 LCD
+- Time and temperature displayed on HD44780 16x2 LCD (4-bit mode)
 - Written in pure assembly (lots of comments in code)
 - Demultiplexed P2.0-P2.4 lines
