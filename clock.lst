@@ -1,0 +1,728 @@
+0000-                  7
+0000-                  8     ;Defines
+0000-                  9     sec_reg .eq $00
+0002-                 10     min_reg .eq $02
+0004-                 11     hr_reg  .eq $04
+0007-                 12     day_reg .eq $07
+0008-                 13     mth_reg .eq $08
+0009-                 14     yr_reg  .eq $09
+000A-                 15     a_reg   .eq $0A
+000B-                 16     b_reg   .eq $0B
+000C-                 17     c_reg   .eq $0C
+000D-                 18     d_reg   .eq $0D
+0000-                 19
+00CC-                 20     skip_rom                .eq $CC
+0044-                 21     convert_t               .eq $44
+00BE-                 22     read_scratchpad .eq $BE
+0000-                 23
+0000-                 24     ;Variables in RAM
+0020-                 25     hr      .eq $20
+0021-                 26     min     .eq $21
+0022-                 27     sec     .eq $22
+0023-                 28     day .eq $23
+0024-                 29     mth .eq $24
+0025-                 30     yr  .eq $25
+0026-                 31     temp_int .eq $26
+0027-                 32     temp_dec .eq $27
+0000-                 33
+0000-                 34     ;Fixed purpose registers
+0000-                 35     ;R3 - interrupt flag
+0000-                 36     ;R4 - position pointer in time set routine
+0000-                 37
+0000-                 38     ;Set vectors
+0000-                 39             .no $00 ;Set jump to main at reset vector (00h)
+0000-04 05            40 (2)         jmp main
+0002-                 41
+0003                 42             .no $03 ;Set jump to external interrupt ISR at external interrupt vector (03h)
+0003-44 FC            43 (2)         jmp rtc_isr
+0005-                 44
+0005-                 45     ;Main program
+0005-                 46     main:
+0005-BB 00            47 (2)         mov R3,#0 ;Clear interrupt flag
+0007-BC 00            48 (2)         mov R4,#0 ;Clear position pointer
+0009-BE FA            49 (2)         mov R6,#250
+000B-74 09            50 (2)         call delay_ms ;Wait for 250ms for voltages to stabilize
+000D-54 36            51 (2)         call rtc_init ;Initialize DS12887
+000F-34 D5            52 (2)         call lcd_init ;Initialize display
+0011-05               53 (1)         en i ;Enable external interrupt
+0012-                 54     ;Infinite loop
+0012-                 55     loop:
+0012-FB               56 (1)         mov A,R3
+0013-C6 12            57 (2)         jz loop ;Loop until flag is set
+0015-CB               58 (1)         dec R3 ;Fastest way to clear interrupt flag
+0016-                 59
+0016-54 F7            60 (2)         call blink_led
+0018-14 30            61 (2)         call time_set
+001A-54 43            62 (2)         call rtc_get_data
+001C-14 CD            63 (2)         call time_display
+001E-34 22            64 (2)         call temp_get
+0020-34 69            65 (2)         call temp_display
+0022-04 12            66 (2)         jmp loop
+0024-                 67
+0024-                 68     ;------------------Constants-------------------
+0024-                 69
+0024-                 70     ;Array with number of days in month
+0024-                 71     month_days:
+0024-                 72             .ot ;Open table - check whether whole table and movp instruction are on the same page
+0024-1F               73             .db 31
+0025-1C               74             .db 28
+0026-1F               75             .db 31
+0027-1E               76             .db 30
+0028-1F               77             .db 31
+0029-1E               78             .db 30
+002A-1F               79             .db 31
+002B-1F               80             .db 31
+002C-1E               81             .db 30
+002D-1F               82             .db 31
+002E-1E               83             .db 30
+002F-1F               84             .db 31
+0030-                 85
+0030-                 86     ;----------------Subroutines-------------------
+0030-                 87
+0030-                 88     ;Uses R0,R1,R4
+0030-                 89     time_set:
+0030-36 35            90 (2)         jt0 set_switch ;If position change button not pressed goto value setting part
+0032-FC               91 (1)         mov A,R4 ;Otherwise
+0033-17               92 (1)         inc A
+0034-AC               93 (1)         mov R4,A ;Increment position pointer
+0035-                 94     set_switch: ;switch(position pointer)
+0035-FC               95 (1)         mov A,R4
+0036-C6 56            96 (2)         jz hours_set ;case 0
+0038-                 97
+0038-FC               98 (1)         mov A,R4
+0039-37               99 (1)         cpl A
+003A-17              100 (1)         inc A ;A = -A
+003B-03 01           101 (2)         add A,#1 ;A = -A+1
+003D-C6 69           102 (2)         jz minutes_set ;case 1
+003F-                103
+003F-FC              104 (1)         mov A,R4
+0040-37              105 (1)         cpl A
+0041-17              106 (1)         inc A ;A = -A
+0042-03 02           107 (2)         add A,#2 ;A = -A+2
+0044-C6 7C           108 (2)         jz day_set ;case 2
+0046-                109
+0046-FC              110 (1)         mov A,R4
+0047-37              111 (1)         cpl A
+0048-17              112 (1)         inc A ;A = -A
+0049-03 03           113 (2)         add A,#3 ;A = -A+3
+004B-C6 98           114 (2)         jz month_set ;case 3
+004D-                115
+004D-FC              116 (1)         mov A,R4
+004E-37              117 (1)         cpl A
+004F-17              118 (1)         inc A ;A = -A
+0050-03 04           119 (2)         add A,#4 ;A = -A+4
+0052-C6 AB           120 (2)         jz year_set ;case 4
+0054-                121
+0054-04 CA           122 (2)         jmp pos_reset ;default - reset position pointer
+0056-                123
+0056-                124     hours_set:
+0056-56 CC           125 (2)         jt1 set_end ;If key not pressed, leave
+0058-B8 20           126 (2)         mov R0,#hr
+005A-F0              127 (1)         mov A,@R0 ;Load actual hours value
+005B-17              128 (1)         inc A ;Increment value
+005C-37              129 (1)         cpl A
+005D-03 18           130 (2)         add A,#24 ;Compare (C = (hr < 24))
+005F-E6 BE           131 (2)         jnc set_clear_time ;If hr >= 24 goto part setting hr = 0 and updating RTC
+0061-37              132 (1)         cpl A
+0062-03 18           133 (2)         add A,#24 ;Otherwise restore hr state before comparison
+0064-A0              134 (1)         mov @R0,A ;Store incremented value
+0065-54 74           135 (2)         call rtc_set_time ;Update RTC
+0067-04 CC           136 (2)         jmp set_end ;Leave
+0069-                137     minutes_set:
+0069-56 CC           138 (2)         jt1 set_end ;If key not pressed, return
+006B-B8 21           139 (2)         mov R0,#min
+006D-F0              140 (1)         mov A,@R0 ;Load actual minutes value
+006E-17              141 (1)         inc A ;Increment value
+006F-37              142 (1)         cpl A
+0070-03 3C           143 (2)         add A,#60 ;Compare (C = (min < 60))
+0072-E6 BE           144 (2)         jnc set_clear_time ;If min >= 60 goto part setting min = 0 and updating RTC
+0074-37              145 (1)         cpl A
+0075-03 3C           146 (2)         add A,#60 ;Otherwise restore min state before comparison
+0077-A0              147 (1)         mov @R0,A ;Store incremented value
+0078-54 74           148 (2)         call rtc_set_time ;Update RTC
+007A-04 CC           149 (2)         jmp set_end ;Leave
+007C-                150     day_set:
+007C-56 CC           151 (2)         jt1 set_end ;If key not pressed, return
+007E-B9 24           152 (2)         mov R1,#mth
+0080-F1              153 (1)         mov A,@R1
+0081-A9              154 (1)         mov R1,A ;Load actual month value
+0082-                155
+0082-23 24           156 (2)         mov A,#month_days ;Get address of array holding number of days in month
+0084-69              157 (1)         add A,R1 ;Add offset to select proper month
+0085-07              158 (1)         dec A ;Offset is counted from 0, months in RTC from 1 - compensate
+0086-A3              159 (2)         movp A,@A ;Load number of days from array to A
+0087-                160             .ct ;Close month_days table after movp - if table and movp are not on the same page, assembler will raise an error
+0087-17              161 (1)         inc A ;For easier comparison later
+0088-A9              162 (1)         mov R1,A ;Store the number in R1
+0089-                163
+0089-B8 23           164 (2)         mov R0,#day
+008B-F0              165 (1)         mov A,@R0 ;Load actual day value
+008C-17              166 (1)         inc A ;Increment day
+008D-37              167 (1)         cpl A
+008E-69              168 (1)         add A,R1 ;Compare to number of days in that month (C = (A < month_days[mth]+1))
+008F-E6 C4           169 (2)         jnc set_clear_date ;If day >= month_days[mth]+1 goto part setting day = 1 and updating RTC
+0091-37              170 (1)         cpl A
+0092-69              171 (1)         add A,R1 ;Otherwise restore min state before comparison
+0093-A0              172 (1)         mov @R0,A ;Store incremented value
+0094-54 97           173 (2)         call rtc_set_date ;Update RTC
+0096-04 CC           174 (2)         jmp set_end ;Leave
+0098-                175     month_set:
+0098-56 CC           176 (2)         jt1 set_end ;If key not pressed, return
+009A-B8 24           177 (2)         mov R0,#mth
+009C-F0              178 (1)         mov A,@R0 ;Load actual month value
+009D-17              179 (1)         inc A ;Increment value
+009E-37              180 (1)         cpl A
+009F-03 0D           181 (2)         add A,#13 ;Compare (C = (mth < 13))
+00A1-E6 C4           182 (2)         jnc set_clear_date ;If mth >= 13 goto part setting mth = 1 and updating RTC
+00A3-37              183 (1)         cpl A
+00A4-03 0D           184 (2)         add A,#13 ;Otherwise restore mth state before comparison
+00A6-A0              185 (1)         mov @R0,A ;Store incremented value
+00A7-54 97           186 (2)         call rtc_set_date ;Update RTC
+00A9-04 CC           187 (2)         jmp set_end ;Leave
+00AB-                188     year_set:
+00AB-56 CC           189 (2)         jt1 set_end ;If key not pressed, return
+00AD-B8 25           190 (2)         mov R0,#yr
+00AF-F0              191 (1)         mov A,@R0 ;Load actual year value
+00B0-17              192 (1)         inc A ;Increment value
+00B1-37              193 (1)         cpl A
+00B2-03 64           194 (2)         add A,#100 ;Compare (C = (yr < 100))
+00B4-E6 C4           195 (2)         jnc set_clear_date ;If yr >= 13 goto part setting yr = 1 and updating RTC (for simplicity I chose to start from year 2001 - project was done in 2020 anyways...)
+00B6-37              196 (1)         cpl A
+00B7-03 64           197 (2)         add A,#100 ;Otherwise restore mth state before comparison
+00B9-A0              198 (1)         mov @R0,A ;Store incremented value
+00BA-54 97           199 (2)         call rtc_set_date ;Update RTC
+00BC-04 CC           200 (2)         jmp set_end ;Leave
+00BE-                201     set_clear_time:
+00BE-B0 00           202 (2)         mov @R0,#0 ;Load 0 to variable that was set in hours_set or minutes_set
+00C0-54 74           203 (2)         call rtc_set_time ;Update RTC
+00C2-04 CC           204 (2)         jmp set_end ;Leave
+00C4-                205     set_clear_date:
+00C4-B0 01           206 (2)         mov @R0,#1 ;Load 1 to variable that was set in day_set, month_set or year_set
+00C6-54 97           207 (2)         call rtc_set_date ;Update RTC
+00C8-04 CC           208 (2)         jmp set_end ;Leave
+00CA-                209     pos_reset:
+00CA-BC 00           210 (2)         mov R4,#0 ;Reset position pointer
+00CC-                211     set_end:
+00CC-83              212 (2)         ret
+00CD-                213
+00CD-                214     ;Uses R0,R1,R2
+00CD-                215     time_display:
+00CD-B8 00           216 (2)         mov R0,#0
+00CF-B9 00           217 (2)         mov R1,#0
+00D1-34 A9           218 (2)         call lcd_gotoxy ;Go to first line, first field
+00D3-                219
+00D3-B9 20           220 (2)         mov R1,#hr
+00D5-F1              221 (1)         mov A,@R1
+00D6-AA              222 (1)         mov R2,A
+00D7-34 B9           223 (2)         call lcd_num ;Display hours
+00D9-                224
+00D9-B8 3A           225 (2)         mov R0,#':'
+00DB-B9 01           226 (2)         mov R1,#1
+00DD-34 88           227 (2)         call lcd_write ;Display ':'
+00DF-                228
+00DF-B9 21           229 (2)         mov R1,#min
+00E1-F1              230 (1)         mov A,@R1
+00E2-AA              231 (1)         mov R2,A
+00E3-34 B9           232 (2)         call lcd_num ;Display minutes
+00E5-                233
+00E5-B8 3A           234 (2)         mov R0,#':'
+00E7-B9 01           235 (2)         mov R1,#1
+00E9-34 88           236 (2)         call lcd_write ;Display ':'
+00EB-                237
+00EB-B9 22           238 (2)         mov R1,#sec
+00ED-F1              239 (1)         mov A,@R1
+00EE-AA              240 (1)         mov R2,A
+00EF-34 B9           241 (2)         call lcd_num ;Display seconds
+00F1-                242
+00F1-B8 03           243 (2)         mov R0,#3
+00F3-B9 01           244 (2)         mov R1,#1
+00F5-34 A9           245 (2)         call lcd_gotoxy ;Go to second line, fourth field
+00F7-                246
+00F7-B9 23           247 (2)         mov R1,#day
+00F9-F1              248 (1)         mov A,@R1
+00FA-AA              249 (1)         mov R2,A
+00FB-34 B9           250 (2)         call lcd_num ;Display day
+00FD-                251
+00FD-B8 2D           252 (2)         mov R0,#'-'
+00FF-B9 01           253 (2)         mov R1,#1
+0101-34 88           254 (2)         call lcd_write ;Display '-'
+0103-                255
+0103-B9 24           256 (2)         mov R1,#mth
+0105-F1              257 (1)         mov A,@R1
+0106-AA              258 (1)         mov R2,A
+0107-34 B9           259 (2)         call lcd_num ;Display month
+0109-                260
+0109-B8 2D           261 (2)         mov R0,#'-'
+010B-B9 01           262 (2)         mov R1,#1
+010D-34 88           263 (2)         call lcd_write ;Display '-'
+010F-                264
+010F-B8 32           265 (2)         mov R0,#'2'
+0111-B9 01           266 (2)         mov R1,#1
+0113-34 88           267 (2)         call lcd_write ;Display '2'
+0115-                268
+0115-B8 30           269 (2)         mov R0,#'0'
+0117-B9 01           270 (2)         mov R1,#1
+0119-34 88           271 (2)         call lcd_write  ;Display '0'
+011B-                272
+011B-B9 25           273 (2)         mov R1,#yr
+011D-F1              274 (1)         mov A,@R1
+011E-AA              275 (1)         mov R2,A
+011F-34 B9           276 (2)         call lcd_num ;Display year
+0121-83              277 (2)         ret
+0122-                278
+0122-                279     ;Uses R0,R1,R2,R7
+0122-                280     temp_get:
+0122-54 BC           281 (2)         call ow_reset ;Send bus reset condition
+0124-B8 CC           282 (2)         mov R0,#skip_rom ;Skip ROM
+0126-54 C5           283 (2)         call ow_write_byte
+0128-B8 BE           284 (2)         mov R0,#read_scratchpad ;Read scratchpad
+012A-54 C5           285 (2)         call ow_write_byte
+012C-                286
+012C-54 DA           287 (2)         call ow_read_byte
+012E-F8              288 (1)         mov A,R0
+012F-AA              289 (1)         mov R2,A ;Store received byte in R2
+0130-54 DA           290 (2)         call ow_read_byte
+0132-                291
+0132-34 3F           292 (2)         call temp_convert
+0134-                293
+0134-54 BC           294 (2)         call ow_reset ;Send bus reset condition
+0136-B8 CC           295 (2)         mov R0,#skip_rom ;Skip ROM
+0138-54 C5           296 (2)         call ow_write_byte
+013A-B8 44           297 (2)         mov R0,#convert_t ;Convert temp - prepare to read next time
+013C-54 C5           298 (2)         call ow_write_byte
+013E-83              299 (2)         ret
+013F-                300
+013F-                301     ;R0 - MSB, R2 - LSB, uses R0,R2
+013F-                302     temp_convert:
+013F-                303             ;Compute integral part
+013F-F8              304 (1)         mov A,R0 ;Load MSB
+0140-E7              305 (1)         rl A
+0141-E7              306 (1)         rl A
+0142-E7              307 (1)         rl A
+0143-E7              308 (1)         rl A ;Shift 4 times left
+0144-53 70           309 (2)         anl A,#%01110000 ;Mask unneeded bits
+0146-A8              310 (1)         mov R0,A ;Store result in R0
+0147-                311
+0147-FA              312 (1)         mov A,R2 ;Load LSB
+0148-77              313 (1)         rr A
+0149-77              314 (1)         rr A
+014A-77              315 (1)         rr A
+014B-77              316 (1)         rr A ;Shift 4 times right
+014C-53 0F           317 (2)         anl A,#%00001111 ;Mask unneeded bits
+014E-48              318 (1)         orl A,R0 ;Add MSBs to LSBs to create result
+014F-                319
+014F-B8 26           320 (2)         mov R0,#temp_int
+0151-A0              321 (1)         mov @R0,A ;Store computed value
+0152-                322
+0152-                323             ;Compute decimal part - ultra evil math hacking to overcome lack of division, multiplication and floats!
+0152-                324             ;Computes 6.25*decimal_bits as (25/4)*decimal_bits, what gives 2 decimal places
+0152-                325             ;Multiplication by 25 is done by shifting left and adding (25*x = 16*x + 8*x + x = (x << 4) + (x << 3) + x)
+0152-                326             ;The equation has to be transformed so that the addition potentially causing overflow will be the last one, to use carry as the ninth bit of result (25*15 > 255)
+0152-                327             ;Division by 4 is performed by right shifting, but to use carry set by addition it has to be RRC (rotate right through carry), not RR
+0152-                328             ;So the final equation: (25/4)*x = (((x << 4) + x + (x << 3)) >>> 2; where >>> - RRC
+0152-FA              329 (1)         mov A,R2 ;Load LSB
+0153-53 0F           330 (2)         anl A,#%00001111 ;Get decimal bits
+0155-AA              331 (1)         mov R2,A ;Store just those bits in R2
+0156-E7              332 (1)         rl A
+0157-E7              333 (1)         rl A
+0158-E7              334 (1)         rl A
+0159-E7              335 (1)         rl A
+015A-A8              336 (1)         mov R0,A ;R0 = x << 4
+015B-                337
+015B-FA              338 (1)         mov A,R2
+015C-E7              339 (1)         rl A
+015D-E7              340 (1)         rl A
+015E-E7              341 (1)         rl A ;A = x << 3
+015F-                342
+015F-6A              343 (1)         add A,R2 ;First perform the addition that won't cause overflow
+0160-68              344 (1)         add A,R0 ;Now perform the addition potentially causing overflow
+0161-67              345 (1)         rrc A
+0162-67              346 (1)         rrc A ;Divide by 4 with carry
+0163-53 7F           347 (2)         anl A,#%01111111 ;Mask MSB - result will be in 0...93 interval, so it should never be set
+0165-B8 27           348 (2)         mov R0,#temp_dec
+0167-A0              349 (1)         mov @R0,A ;Store computed value
+0168-83              350 (2)         ret
+0169-                351
+0169-                352     ;Uses R0,R1,R2
+0169-                353     temp_display:
+0169-B8 0A           354 (2)         mov R0,#10
+016B-B9 00           355 (2)         mov R1,#0
+016D-34 A9           356 (2)         call lcd_gotoxy ;Go to first line, eleventh field
+016F-                357
+016F-B8 26           358 (2)         mov R0,#temp_int
+0171-F0              359 (1)         mov A,@R0
+0172-AA              360 (1)         mov R2,A
+0173-34 B9           361 (2)         call lcd_num ;Display integral part
+0175-                362
+0175-B8 2E           363 (2)         mov R0,#'.'
+0177-B9 01           364 (2)         mov R1,#1
+0179-34 88           365 (2)         call lcd_write ;Display '.'
+017B-                366
+017B-B8 27           367 (2)         mov R0,#temp_dec
+017D-F0              368 (1)         mov A,@R0
+017E-AA              369 (1)         mov R2,A
+017F-34 B9           370 (2)         call lcd_num ;Display decimal part
+0181-                371
+0181-B8 43           372 (2)         mov R0,#'C'
+0183-B9 01           373 (2)         mov R1,#1
+0185-34 88           374 (2)         call lcd_write ;Display 'C'
+0187-83              375 (2)         ret
+0188-                376
+0188-                377     ;R0 - byte, R1 - cmd/data switch, uses R0,R1
+0188-                378     lcd_write:
+0188-9A DF           379 (2)         anl P2,#%11011111 ;Clear RS
+018A-                380             ;Test whether data or cmd will be sent
+018A-F9              381 (1)         mov A,R1 ;Load R1 to A to test if zero
+018B-C6 8F           382 (2)         jz skip_rs ;Skip RS line setting - cmd will be sent
+018D-8A 20           383 (2)         orl P2,#%00100000 ;Set RS line - data will be sent
+018F-                384     skip_rs:
+018F-                385             ;Send upper nibble
+018F-F8              386 (1)         mov A,R0 ;Load byte to A
+0190-53 F0           387 (2)         anl A,#%11110000 ;Mask lower nibble
+0192-39              388 (2)         outl P1,A ;Send data to P1
+0193-                389
+0193-8A 10           390 (2)         orl P2,#%00010000 ;Set E line
+0195-74 02           391 (2)         call delay_500us ;Wait for LCD
+0197-9A EF           392 (2)         anl P2,#%11101111 ;Clear E line
+0199-74 02           393 (2)         call delay_500us ;Wait for LCD
+019B-                394
+019B-                395             ;Send lower nibble
+019B-F8              396 (1)         mov A,R0 ;Load byte to A
+019C-47              397 (1)         swap A ;Swap nibbles
+019D-53 F0           398 (2)         anl A,#%11110000 ;Mask lower nibble
+019F-39              399 (2)         outl P1,A ;Send data to P1
+01A0-                400
+01A0-8A 10           401 (2)         orl P2,#%00010000 ;Set E line
+01A2-74 02           402 (2)         call delay_500us ;Wait for LCD
+01A4-9A EF           403 (2)         anl P2,#%11101111 ;Clear E line
+01A6-74 02           404 (2)         call delay_500us ;Wait for LCD
+01A8-83              405 (2)         ret
+01A9-                406
+01A9-                407     ;R0 - y, R1 - x, uses R0,R1
+01A9-                408     lcd_gotoxy:
+01A9-F9              409 (1)         mov A,R1
+01AA-96 B0           410 (2)         jnz second_row ;Check row
+01AC-23 80           411 (2)         mov A,#$80 ;If first, load address of its first position
+01AE-24 B2           412 (2)         jmp lcd_gotoxy_write
+01B0-                413     second_row:
+01B0-23 C0           414 (2)         mov A,#$C0 ;If second, load address of its first position
+01B2-                415     lcd_gotoxy_write:
+01B2-68              416 (1)         add A,R0 ;Add offset (y)
+01B3-A8              417 (1)         mov R0,A
+01B4-B9 00           418 (2)         mov R1,#0
+01B6-34 88           419 (2)         call lcd_write ;Send command
+01B8-83              420 (2)         ret
+01B9-                421
+01B9-                422     ;R2 - value to be displayed, uses R0,R1,R2
+01B9-                423     lcd_num:
+01B9-B8 00           424 (2)         mov R0,#0 ;Clear tens
+01BB-B9 01           425 (2)         mov R1,#1 ;Chars will be sent to display
+01BD-                426     div10:
+01BD-FA              427 (1)         mov A,R2 ;Load value to be displayed to A
+01BE-37              428 (1)         cpl A ;Complement value
+01BF-03 0A           429 (2)         add A,#10 ;Add 10 (C = (R2 < 10))
+01C1-F6 C8           430 (2)         jc div10_end ;If there has been carry - break
+01C3-37              431 (1)         cpl A ;Complement A (A=R2-10)
+01C4-AA              432 (1)         mov R2,A ;Store new value in R2
+01C5-18              433 (1)         inc R0 ;Increment tens
+01C6-24 BD           434 (2)         jmp div10 ;Perform again, until R2 < 10
+01C8-                435     div10_end:
+01C8-                436             ;Display tens
+01C8-F8              437 (1)         mov A,R0
+01C9-03 30           438 (2)         add A,#$30 ;Add ASCII code for '0'
+01CB-A8              439 (1)         mov R0,A
+01CC-34 88           440 (2)         call lcd_write
+01CE-                441
+01CE-                442             ;Display ones
+01CE-FA              443 (1)         mov A,R2
+01CF-03 30           444 (2)         add A,#$30 ;Add ASCII code for '0'
+01D1-A8              445 (1)         mov R0,A
+01D2-34 88           446 (2)         call lcd_write
+01D4-83              447 (2)         ret
+01D5-                448
+01D5-                449     ;Uses R0,R1,R6,R7
+01D5-                450     lcd_init:
+01D5-B9 00           451 (2)         mov R1,#0 ;Whole subroutine will be sending commands
+01D7-                452
+01D7-B8 30           453 (2)         mov R0,#$30
+01D9-34 88           454 (2)         call lcd_write ;Weird 4-bit init command first time...
+01DB-BE 05           455 (2)         mov R6,#5
+01DD-74 09           456 (2)         call delay_ms ;Wait 5ms
+01DF-                457
+01DF-B8 30           458 (2)         mov R0,#$30
+01E1-34 88           459 (2)         call lcd_write ;Weird repeated 4-bit init command second time...
+01E3-BE 01           460 (2)         mov R6,#1
+01E5-74 09           461 (2)         call delay_ms ;Wait 1ms
+01E7-                462
+01E7-B8 30           463 (2)         mov R0,#$30
+01E9-34 88           464 (2)         call lcd_write ;Weird repeated 4-bit init command third time...
+01EB-BE 01           465 (2)         mov R6,#1
+01ED-74 09           466 (2)         call delay_ms ;Wait 1ms
+01EF-                467
+01EF-B8 02           468 (2)         mov R0,#$02
+01F1-34 88           469 (2)         call lcd_write ;Init 4-bit mode
+01F3-                470
+01F3-B8 28           471 (2)         mov R0,#$28
+01F5-34 88           472 (2)         call lcd_write ;2 lines, 5*8 matrix, 4-bit
+01F7-                473
+01F7-B8 0C           474 (2)         mov R0,#$0C
+01F9-34 88           475 (2)         call lcd_write ;Display on, cursor off
+01FB-                476
+01FB-B8 06           477 (2)         mov R0,#$06
+01FD-34 88           478 (2)         call lcd_write ;Autoincrement cursor position, text scroll off
+01FF-                479
+01FF-54 02           480 (2)         call lcd_cls ;Clear screen
+0201-83              481 (2)         ret
+0202-                482
+0202-                483     ;Uses R0,R1,R6,R7
+0202-                484     lcd_cls:
+0202-B9 00           485 (2)         mov R1,#0
+0204-B8 01           486 (2)         mov R0,#$01
+0206-34 88           487 (2)         call lcd_write ;Clear display
+0208-BE 01           488 (2)         mov R6,#1
+020A-74 09           489 (2)         call delay_ms ;Wait 1ms
+020C-                490
+020C-B8 80           491 (2)         mov R0,#$80
+020E-34 88           492 (2)         call lcd_write ;Set cursor at first place in upper row
+0210-BE 01           493 (2)         mov R6,#1
+0212-74 09           494 (2)         call delay_ms ;Wait 1ms
+0214-83              495 (2)         ret
+0215-                496
+0215-                497     ;R0 - byte, R1 - address, uses R0,R1
+0215-                498     rtc_write_byte:
+0215-                499             ;Prepare chip
+0215-8A 0F           500 (2)         orl P2,#%00001111 ;Set DS, RNW, AS, CS high, leave other pins
+0217-9A F7           501 (2)         anl P2,#%11110111 ;CS to zero - enable chip
+0219-                502
+0219-                503             ;Set address
+0219-F9              504 (1)         mov A,R1 ;Write address to port
+021A-39              505 (2)         outl P1,A
+021B-9A F3           506 (2)         anl P2,#%11110011 ;Latch address (AS low)
+021D-                507
+021D-                508             ;Write data
+021D-F8              509 (1)         mov A,R0 ;Send data to port
+021E-39              510 (2)         outl P1,A
+021F-9A F1           511 (2)         anl P2,#%11110001 ;Write data (RNW low)
+0221-8A 0F           512 (2)         orl P2,#%00001111 ;DS, AS, RNW, CS high - chip disabled
+0223-83              513 (2)         ret
+0224-                514
+0224-                515     ;R0 - result, R1 - address, uses R0,R1
+0224-                516     rtc_read_byte:
+0224-                517             ;Prepare chip
+0224-8A 0F           518 (2)         orl P2,#%00001111 ;Set DS, RNW, AS, CS high, leave other pins
+0226-9A F7           519 (2)         anl P2,#%11110111 ;CS to zero - enable chip
+0228-                520
+0228-                521             ;Set address
+0228-F9              522 (1)         mov A,R1 ;Write address to port
+0229-39              523 (2)         outl P1,A
+022A-9A F3           524 (2)         anl P2,#%11110011 ;Latch address (AS low)
+022C-                525
+022C-                526             ;Read data
+022C-23 FF           527 (2)         mov A,#$FF ;Set whole port to 1, so that it can be pulled down
+022E-39              528 (2)         outl P1,A
+022F-9A F2           529 (2)         anl P2,#%11110010 ;Read data (DS low)
+0231-                530
+0231-09              531 (2)         in A,P1 ;Load data
+0232-A8              532 (1)         mov R0,A ;Store in R0
+0233-8A 0F           533 (2)         orl P2,#%00001111 ;DS, AS, RNW, CS high, leave other pins - chip disabled
+0235-83              534 (2)         ret
+0236-                535
+0236-                536     ;Uses R0,R1
+0236-                537     rtc_init:
+0236-B8 2F           538 (2)         mov R0,#%00101111
+0238-B9 0A           539 (2)         mov R1,#a_reg
+023A-54 15           540 (2)         call rtc_write_byte ;Enable oscillator, set periodic interrupt frequency to 2Hz
+023C-                541
+023C-B8 46           542 (2)         mov R0,#%01000110
+023E-B9 0B           543 (2)         mov R1,#b_reg
+0240-54 15           544 (2)         call rtc_write_byte ;Enable periodic interrupt, binary data format, 24h mode
+0242-83              545 (2)         ret
+0243-                546
+0243-                547     ;Uses R0,R1
+0243-                548     rtc_get_data:
+0243-B9 09           549 (2)         mov R1,#yr_reg
+0245-54 24           550 (2)         call rtc_read_byte ;Read year
+0247-                551
+0247-B9 25           552 (2)         mov R1,#yr
+0249-F8              553 (1)         mov A,R0
+024A-A1              554 (1)         mov @R1,A ;Store in yr variable
+024B-                555
+024B-B9 08           556 (2)         mov R1,#mth_reg
+024D-54 24           557 (2)         call rtc_read_byte ;Read month
+024F-                558
+024F-B9 24           559 (2)         mov R1,#mth
+0251-F8              560 (1)         mov A,R0
+0252-A1              561 (1)         mov @R1,A ;Store in mth variable
+0253-                562
+0253-B9 07           563 (2)         mov R1,#day_reg
+0255-54 24           564 (2)         call rtc_read_byte ;Read day
+0257-                565
+0257-B9 23           566 (2)         mov R1,#day
+0259-F8              567 (1)         mov A,R0
+025A-A1              568 (1)         mov @R1,A ;Store in day variable
+025B-                569
+025B-B9 04           570 (2)         mov R1,#hr_reg
+025D-54 24           571 (2)         call rtc_read_byte ;Read hour
+025F-                572
+025F-B9 20           573 (2)         mov R1,#hr
+0261-F8              574 (1)         mov A,R0
+0262-A1              575 (1)         mov @R1,A ;Store in hr variable
+0263-                576
+0263-B9 02           577 (2)         mov R1,#min_reg
+0265-54 24           578 (2)         call rtc_read_byte ;Read minute
+0267-                579
+0267-B9 21           580 (2)         mov R1,#min
+0269-F8              581 (1)         mov A,R0
+026A-A1              582 (1)         mov @R1,A ;Store in min variable
+026B-                583
+026B-B9 00           584 (2)         mov R1,#sec_reg
+026D-54 24           585 (2)         call rtc_read_byte ;Read second
+026F-                586
+026F-B9 22           587 (2)         mov R1,#sec
+0271-F8              588 (1)         mov A,R0
+0272-A1              589 (1)         mov @R1,A ;Store in sec variable
+0273-83              590 (2)         ret
+0274-                591
+0274-                592     ;Uses R0,R1
+0274-                593     rtc_set_time:
+0274-B8 86           594 (2)         mov R0,#%10000110
+0276-B9 0B           595 (2)         mov R1,#b_reg
+0278-54 15           596 (2)         call rtc_write_byte ;Set SET bit
+027A-                597
+027A-B9 20           598 (2)         mov R1,#hr
+027C-F1              599 (1)         mov A,@R1
+027D-A8              600 (1)         mov R0,A
+027E-B9 04           601 (2)         mov R1,#hr_reg
+0280-54 15           602 (2)         call rtc_write_byte ;Set hours
+0282-                603
+0282-B9 21           604 (2)         mov R1,#min
+0284-F1              605 (1)         mov A,@R1
+0285-A8              606 (1)         mov R0,A
+0286-B9 02           607 (2)         mov R1,#min_reg
+0288-54 15           608 (2)         call rtc_write_byte ;Set minutes
+028A-                609
+028A-B8 00           610 (2)         mov R0,#0
+028C-B9 00           611 (2)         mov R1,#sec_reg
+028E-54 15           612 (2)         call rtc_write_byte ;Clear seconds
+0290-                613
+0290-B8 46           614 (2)         mov R0,#%01000110
+0292-B9 0B           615 (2)         mov R1,#b_reg
+0294-54 15           616 (2)         call rtc_write_byte ;Clear SET bit, set PIE bit
+0296-83              617 (2)         ret
+0297-                618
+0297-                619     ;Uses R0,R1
+0297-                620     rtc_set_date:
+0297-B8 86           621 (2)         mov R0,#%10000110
+0299-B9 0B           622 (2)         mov R1,#b_reg
+029B-54 15           623 (2)         call rtc_write_byte ;Set SET bit
+029D-                624
+029D-B9 25           625 (2)         mov R1,#yr
+029F-F1              626 (1)         mov A,@R1
+02A0-A8              627 (1)         mov R0,A
+02A1-B9 09           628 (2)         mov R1,#yr_reg
+02A3-54 15           629 (2)         call rtc_write_byte ;Set year
+02A5-                630
+02A5-B9 24           631 (2)         mov R1,#mth
+02A7-F1              632 (1)         mov A,@R1
+02A8-A8              633 (1)         mov R0,A
+02A9-B9 08           634 (2)         mov R1,#mth_reg
+02AB-54 15           635 (2)         call rtc_write_byte ;Set month
+02AD-                636
+02AD-B9 23           637 (2)         mov R1,#day
+02AF-F1              638 (1)         mov A,@R1
+02B0-A8              639 (1)         mov R0,A
+02B1-B9 07           640 (2)         mov R1,#day_reg
+02B3-54 15           641 (2)         call rtc_write_byte ;Set day
+02B5-                642
+02B5-B8 46           643 (2)         mov R0,#%01000110
+02B7-B9 0B           644 (2)         mov R1,#b_reg
+02B9-54 15           645 (2)         call rtc_write_byte ;Clear SET bit, set PIE bit
+02BB-83              646 (2)         ret
+02BC-                647
+02BC-                648     ;No registers used
+02BC-                649     ow_reset:
+02BC-9A BF           650 (2)         anl P2,#%10111111 ;Clear OW pin
+02BE-74 02           651 (2)         call delay_500us ;Hold low for 500us
+02C0-8A 40           652 (2)         orl P2,#%01000000 ;Set OW pin
+02C2-74 02           653 (2)         call delay_500us ;Wait for 500us for timeslot to end
+02C4-83              654 (2)         ret
+02C5-                655
+02C5-                656     ;R0 - byte to be written, uses R0,R1,R7
+02C5-                657     ow_write_byte:
+02C5-F8              658 (1)         mov A,R0 ;Load byte to A
+02C6-37              659 (1)         cpl A ;Because of 8049 limitations - there's no jnbx instruction...
+02C7-B9 08           660 (2)         mov R1,#8 ;Write 8 bits
+02C9-                661     ow_write_loop:
+02C9-BF 0B           662 (2)         mov R7,#11 ;Set delay loop counter; ~3.4us
+02CB-9A BF           663 (2)         anl P2,#%10111111 ;Clear OW pin; ~3.4us
+02CD-12 D1           664 (2)         jb0 ow_write_zero ;Check LSB, if not set - send zero; ~3.4us
+02CF-                665     ow_write_one:
+02CF-8A 40           666 (2)         orl P2,#%01000000 ;Set OW pin; ~3.4us
+02D1-                667     ow_write_zero:
+02D1-00              668 (1)         nop
+02D2-EF D1           669 (2)         djnz R7,ow_write_zero ;Wait for ~50us
+02D4-8A 40           670 (2)         orl P2,#%01000000 ;Set OW pin; ~3.4us
+02D6-77              671 (1)         rr A ;Shift byte one bit right; ~1.7us
+02D7-E9 C9           672 (2)         djnz R1,ow_write_loop ;Write next bit; ~3.4us
+02D9-83              673 (2)         ret
+02DA-                674
+02DA-                675     ;R0 - received byte, uses R0,R1,R7
+02DA-                676     ow_read_byte:
+02DA-B8 00           677 (2)         mov R0,#0 ;Clear result
+02DC-B9 08           678 (2)         mov R1,#8 ;Read 8 bits
+02DE-                679     ow_read_loop:
+02DE-BF 06           680 (2)         mov R7,#6 ;Set delay loop counter; ~3.4us
+02E0-                681             ;Shift result one bit right
+02E0-F8              682 (1)         mov A,R0 ;~1.7us
+02E1-77              683 (1)         rr A ;~1.7us
+02E2-A8              684 (1)         mov R0,A ;~1.7us
+02E3-                685             ;Request read - OW pin at least 5us low
+02E3-9A BF           686 (2)         anl P2,#%10111111 ;Clear OW pin; ~3.4us
+02E5-00              687 (1)         nop ;Wait for ~1.7us
+02E6-8A 40           688 (2)         orl P2,#%01000000 ;Set OW pin; ~3.4us
+02E8-                689             ;Read bit and complete 60us timeslot
+02E8-0A              690 (2)         in A,P2 ;Read P2; ~3.4us
+02E9-53 40           691 (2)         anl A,#%01000000 ;Read OW pin; ~3.4us
+02EB-C6 F1           692 (2)         jz ow_read_zero ;~3.4us
+02ED-                693     ow_read_one:
+02ED-F8              694 (1)         mov A,R0 ;~1.7us
+02EE-43 80           695 (2)         orl A,#%10000000 ;~3.4us
+02F0-A8              696 (1)         mov R0,A ;Set bit in result; ~1.7us
+02F1-                697     ow_read_zero:
+02F1-00              698 (1)         nop ;~1.7us
+02F2-EF F1           699 (2)         djnz R7,ow_read_zero ;Wait for ~30us; ~3.4us
+02F4-E9 DE           700 (2)         djnz R1,ow_read_loop ;Receive next bit; ~3.4us
+02F6-83              701 (2)         ret
+02F7-                702
+02F7-                703     ;No registers used
+02F7-                704     blink_led:
+02F7-0A              705 (2)         in A,P2 ;Load actual P2 state
+02F8-D3 80           706 (2)         xrl A,#%10000000 ;XOR MSB
+02FA-3A              707 (2)         outl P2,A ;Write to port
+02FB-83              708 (2)         ret
+02FC-                709
+02FC-                710     ;Uses R0,R1,R3
+02FC-                711     rtc_isr:
+02FC-B9 0C           712 (2)         mov R1,#c_reg
+02FE-54 24           713 (2)         call rtc_read_byte ;Clear DS12887 PIF flag
+0300-1B              714 (1)         inc R3 ;Fastest way to set interrupt flag
+0301-93              715 (2)         retr
+0302-                716
+0302-                717     ;~500uS delay, uses R7
+0302-                718     delay_500us:
+0302-BF 47           719 (2)         mov R7,#71
+0304-                720     delay_500us_loop:
+0304-00              721 (1)         nop
+0305-00              722 (1)         nop
+0306-EF 04           723 (2)         djnz R7,delay_500us_loop
+0308-83              724 (2)         ret
+0309-                725
+0309-                726     ;R6 - delay time in msec, uses R6,R7
+0309-                727     delay_ms:
+0309-BF 92           728 (2)         mov R7,#146
+030B-                729     delay_ms_loop:
+030B-00              730 (1)         nop
+030C-00              731 (1)         nop
+030D-EF 0B           732 (2)         djnz R7,delay_ms_loop
+030F-EE 09           733 (2)         djnz R6,delay_ms
+0311-83              734 (2)         ret
